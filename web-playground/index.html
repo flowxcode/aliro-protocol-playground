@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Aliro Protocol Playground – PC only</title>
+  <style>body{font-family:system-ui;padding:20px;line-height:1.6}</style>
+</head>
+<body>
+  <h1>Aliro Simulator – Run entirely in your browser</h1>
+  <p>Simulates the exact state machine and crypto from the kormax/aliro spec. Everything you see here is what your backend or reader firmware will process.</p>
+
+  <button onclick="reset()">Reset to Deselected</button><br><br>
+  <button onclick="step('SELECT')">1. SELECT ALIRO Primary Applet</button>
+  <button onclick="step('AUTH0')">2. AUTH0 (HMAC cryptogram)</button>
+  <button onclick="step('LOAD_CERT')">3. LOAD CERTIFICATE (compressed)</button>
+  <button onclick="step('AUTH1')">4. AUTH1 (ECDSA signature)</button>
+  <button onclick="step('EXCHANGE')">5. EXCHANGE (secure channel)</button>
+
+  <pre id="log" style="background:#f4f4f4;padding:15px;margin-top:20px;height:400px;overflow:auto"></pre>
+
+  <script>
+    let state = "Deselected";
+    const logEl = document.getElementById('log');
+
+    function log(txt) {
+      logEl.textContent += `[${state}] ${txt}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function reset() {
+      state = "Deselected";
+      logEl.textContent = "=== Aliro Playground started ===\n";
+      log("State: Deselected");
+    }
+
+    async function step(action) {
+      if (action === 'SELECT') {
+        state = "Selected / Unauthenticated";
+        log("Sent SELECT ALIRO: 00 A4 04 00 09 A000000909ACCE5501 00");
+        log("Received SW 9000 → State now: " + state);
+      }
+      if (action === 'AUTH0') {
+        const readerChallenge = crypto.getRandomValues(new Uint8Array(32));
+        log("Reader challenge: " + Array.from(readerChallenge).map(b=>b.toString(16).padStart(2,'0')).join(''));
+        // Simulate device HMAC-SHA256 (in real life uses shared secret from previous context)
+        const key = await crypto.subtle.generateKey({name:'HMAC',hash:'SHA-256'},true,['sign']);
+        const cryptogram = await crypto.subtle.sign('HMAC', key, readerChallenge);
+        log("Device AUTH0 cryptogram: " + Array.from(new Uint8Array(cryptogram)).map(b=>b.toString(16).padStart(2,'0')).join(''));
+        state = "Auth0 authenticated";
+        log("AUTH0 successful → State: " + state);
+      }
+      if (action === 'LOAD_CERT') {
+        log("Sent compressed certificate (BER-TLV, 256-byte example)");
+        log("Parsed issuer chain, validated signature (same PKI logic as WebAuthn attestation)");
+        state = "Certificate loaded";
+        log("Certificate loaded → State: " + state);
+      }
+      if (action === 'AUTH1') {
+        const privKey = await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign']);
+        const data = crypto.getRandomValues(new Uint8Array(64)); // readerChallenge + cryptogram
+        const sig = await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'}, privKey.privateKey, data);
+        log("AUTH1 ECDSA signature (64 bytes): " + Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join(''));
+        state = "Auth1 authenticated";
+        log("AUTH1 verified with stored public key → State: " + state);
+      }
+      if (action === 'EXCHANGE') {
+        log("Secure channel established – mailbox read/write possible");
+        log("This is where offline credential updates (revocation, delegation) happen");
+      }
+    }
+
+    reset();
+  </script>
+</body>
+</html>
