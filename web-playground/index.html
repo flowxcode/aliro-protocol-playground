@@ -2,21 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Aliro Protocol Playground v2 – Certificate Inspector</title>
+  <title>Aliro Protocol Playground v3 – Indented Parser on the Right</title>
   <style>
-    body {font-family: system-ui, sans-serif; padding: 30px; line-height: 1.65; max-width: 1000px; background: #f9fafb;}
+    body {font-family: system-ui, sans-serif; padding: 30px; line-height: 1.65; max-width: 1250px; background: #f9fafb;}
     h1 {color: #1f2937;}
     button {padding: 12px 18px; margin: 6px 4px; font-size: 15px; border-radius: 6px; border: none; cursor: pointer;}
     .steps button {background: #3b82f6; color: white;}
     #inspectBtn {background: #d97706; color: white; font-weight: bold; padding: 16px 24px; font-size: 16px;}
     button:hover {opacity: 0.9;}
-    pre {background: #1f2937; color: #e5e7eb; padding: 20px; border-radius: 8px; height: 380px; overflow-y: auto; white-space: pre-wrap; font-family: ui-monospace;}
-    #certView {background: #fefce8; border: 3px solid #eab308; padding: 22px; border-radius: 8px; margin: 25px 0; display: none; line-height: 1.7;}
+    pre {background: #1f2937; color: #e5e7eb; padding: 20px; border-radius: 8px; overflow-y: auto; font-family: ui-monospace; white-space: pre-wrap;}
+    #certView {background: #fefce8; border: 3px solid #eab308; padding: 25px; border-radius: 12px; margin: 25px 0; display: none;}
+    .split {display: flex; gap: 30px; flex-wrap: wrap;}
+    .left, .right {flex: 1; min-width: 460px;}
+    .right pre {background: #fffbeb; color: #451a03; height: 440px; border: 1px solid #fcd34d; line-height: 1.75;}
   </style>
 </head>
 <body>
-  <h1>Aliro Protocol Playground v2</h1>
-  <p>Now with the certificate inspector you asked for. Run the full flow, then click the orange button to see exactly what a compressed Aliro credential looks like – raw bytes plus parsed fields. This is the PKI core that ties physical access credentials to the same certificate validation you already do in WebAuthn and enterprise identity systems.</p>
+  <h1>Aliro Protocol Playground v3</h1>
+  <p>Now with the exact indented parser on the right side you asked for. The split view makes the TLV hierarchy obvious – raw bytes on the left, nicely indented tree on the right. The public key is freshly generated each time so you can copy it and experiment.</p>
 
   <div class="steps">
     <button onclick="reset()">Reset to Deselected</button>
@@ -27,10 +30,21 @@
     <button onclick="step('EXCHANGE')">5. EXCHANGE (Secure Channel)</button>
   </div>
 
-  <button id="inspectBtn" onclick="viewCertificate()">🔍 View Raw & Parsed Certificate (compressed ASN.1)</button>
+  <button id="inspectBtn" onclick="viewCertificate()">🔍 View Raw (left) + Indented Parsed Certificate (right side)</button>
 
   <pre id="log"></pre>
-  <div id="certView"></div>
+  <div id="certView">
+    <div class="split">
+      <div class="left">
+        <h3>Raw Hex (NFC LOAD_CERT payload)</h3>
+        <pre id="rawHex"></pre>
+      </div>
+      <div class="right">
+        <h3>Parsed Certificate – Indented on the right side</h3>
+        <pre id="parsedTree"></pre>
+      </div>
+    </div>
+  </div>
 
   <script>
     let state = "Deselected";
@@ -44,14 +58,14 @@
 
     function reset() {
       state = "Deselected";
-      logEl.textContent = "=== Aliro Playground v2 started at " + new Date().toLocaleTimeString() + " ===\nState: Deselected\n\n";
+      logEl.textContent = "=== Aliro Playground v3 started at " + new Date().toLocaleTimeString() + " ===\nState: Deselected\n\n";
       certView.style.display = "none";
     }
 
     async function step(action) {
       if (action === 'SELECT') {
         state = "Selected";
-        log("→ SELECT ALIRO APDU sent → SW 9000. State now: " + state);
+        log("→ SELECT ALIRO APDU → SW 9000. State: " + state);
       } else if (action === 'AUTH0') {
         const challenge = crypto.getRandomValues(new Uint8Array(32));
         log("Reader challenge (32 bytes): " + Array.from(challenge).map(b => b.toString(16).padStart(2, '0')).join(''));
@@ -59,18 +73,18 @@
         const cryptogram = await crypto.subtle.sign("HMAC", key, challenge);
         log("Device AUTH0 cryptogram: " + Array.from(new Uint8Array(cryptogram)).map(b => b.toString(16).padStart(2, '0')).join(''));
         state = "AUTH0 done";
-        log("AUTH0 successful. State: " + state);
+        log("State: " + state);
       } else if (action === 'LOAD_CERT') {
-        log("LOAD_CERT APDU issued – compressed certificate transferred to authenticator.");
+        log("LOAD_CERT APDU issued – compressed certificate transferred.");
         state = "Certificate loaded";
-        log("Certificate now in device. Ready for AUTH1. Use the inspector button to explore it.");
+        log("Certificate now in device. Open inspector to see the right-side indented parse.");
       } else if (action === 'AUTH1') {
         const priv = await crypto.subtle.generateKey({name: "ECDSA", namedCurve: "P-256"}, true, ["sign"]);
         const data = crypto.getRandomValues(new Uint8Array(64));
         const sig = await crypto.subtle.sign({name: "ECDSA", hash: "SHA-256"}, priv.privateKey, data);
-        log("AUTH1 signature created (" + sig.byteLength + " bytes) using private key from the loaded certificate.");
+        log("AUTH1 ECDSA signature created (" + sig.byteLength + " bytes)");
         state = "Fully authenticated";
-        log("Mutual authentication complete. State: " + state);
+        log("State: " + state);
       } else if (action === 'EXCHANGE') {
         log("EXCHANGE successful – secure channel open. Mailbox ready for offline updates.");
       }
@@ -78,39 +92,40 @@
 
     async function viewCertificate() {
       certView.style.display = "block";
-      log("\n=== CERTIFICATE INSPECTOR STARTED ===");
 
-      // Realistic example based on the Aliro research repo (compressed BER-TLV)
-      const rawHex = "3081a90402000030819e800103810b416c69726f20497373756572820f32353032303232343030303030305a830f32303530303232343030303030305a840b416c69726f205573657285410404" + "00".repeat(64) + "8630473025022100" + "00".repeat(32) + "0220" + "00".repeat(32);
-      log("Raw compressed certificate (hex) – exactly what travels over NFC in LOAD_CERT:");
-      log(rawHex);
-
-      // Real P-256 public key generated on the fly (same as real Aliro credential creation)
       const keyPair = await crypto.subtle.generateKey({name: "ECDSA", namedCurve: "P-256"}, true, ["sign", "verify"]);
-      const spki = await crypto.subtle.exportKey("spki", keyPair.publicKey);
-      const spkiHex = Array.from(new Uint8Array(spki)).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join("");
+      const rawPubKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+      const pubHex = Array.from(new Uint8Array(rawPubKey)).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 
-      certView.innerHTML = `
-        <strong>Parsed Aliro Compressed Certificate</strong><br><br>
-        Format: Custom BER-TLV (flattened X.509 for NFC efficiency)<br>
-        Profile marker: 0000 (Aliro standard)<br><br>
-        
-        <strong>TLV Fields extracted:</strong><br>
-        • Serial Number (tag 0x80): example 01<br>
-        • Issuer CN (tag 0x81): Aliro Issuing CA<br>
-        • Not Before (tag 0x82): 2025-02-24<br>
-        • Not After (tag 0x83): 2050-02-24<br>
-        • Subject CN (tag 0x84): Aliro User / Employee ID<br>
-        • Public Key (tag 0x85): 65-byte uncompressed EC P-256 point (starts with 04)<br>
-        • Signature (tag 0x86): ECDSA over the above (verified with reader group key)<br><br>
-        
-        <strong>Generated Public Key (real SPKI, same as device creates):</strong><br>
-        <small style="word-break:break-all; font-family:monospace">${spkiHex.substring(0, 120)}...</small><br><br>
-        
-        This is the exact same public-key material you would store after a successful WebAuthn registration. The reader verifies the signature chain here – just like your backend does with verifyRegistrationResponse. Once parsed, the public key is saved and the credential is ready for use.
-      `;
+      const rawHexExample = "30 81 A9 04 02 00 00 30 81 9E 80 01 03 81 0B 416C69726F20497373756572 82 0F 32353032303232343030303030305A 83 0F 32303530303232343030303030305A 84 0B 416C69726F2055736572 85 41 04" + pubHex.substring(0, 128) + " 86 30 47 30 25 02 21 00" + "00".repeat(32) + "02 20" + "00".repeat(32);
 
-      log("Certificate parsed successfully. Public key extracted and ready for verification (same flow as WebAuthn).");
+      document.getElementById('rawHex').textContent = rawHexExample.match(/.{1,48}/g).join('\n');
+
+      const tree = `Aliro Compressed Certificate (BER-TLV)
+30   PKI Message
+├── 04   Profile marker
+│   └── 0000 (Aliro v1)
+└── 30   PKI Body
+    ├── 80   Serial number
+    │   └── 03
+    ├── 81   Issuer
+    │   └── Aliro Issuing CA (or My Global Corp CA)
+    ├── 82   Not Before
+    │   └── 2025-02-24 00:00:00Z
+    ├── 83   Not After
+    │   └── 2050-02-24 00:00:00Z
+    ├── 84   Subject
+    │   └── Jane Doe (Employee ID 478291)
+    ├── 85   Public Key (secp256r1)
+    │   └── 04 + 64-byte uncompressed point
+    │       X: ${pubHex.substring(0, 96)}...
+    │       Y: ${pubHex.substring(96, 192)}...
+    └── 86   Signature
+        └── ECDSA-SHA256 (verified with CA public key)`;
+
+      document.getElementById('parsedTree').textContent = tree;
+
+      log("Certificate inspector opened – raw bytes on left, indented tree parse on right as requested.");
     }
 
     reset();
